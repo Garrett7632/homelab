@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<title>Dashboard</title>
+
+	<style>
+		body {
+			background-color: black;
+			color: white;
+			font-family: Arial, sans-serif;
+			margin: 40px;
+		}
+
+		h1 {
+			text-align: center;
+		}
+
+		h2 {
+			border-bottom: 1px solid white;
+			padding-bottom: 5px;
+		}
+
+		.panel {
+			border: 1px solid white;
+			padding: 20px;
+			margin-bottom: 20px;
+		}
+		
+		.vm {
+			border: 1px solid #555;
+			padding: 15px;
+			margin-top: 10px;
+		}
+
+		.progress {
+			width: 100%;
+			height:20px;
+			background-color: #333;
+			border-radius: 10px;
+			overflow: hidden;
+			margin-top;
+		}
+	
+		.progress-bar {
+			height: 100%;
+			width: 0%;
+			background-color: white;
+			transition: width 0.5s;
+		}
+
+		.usage=text {
+			margin-top: 5px;
+			font-size: 14px;
+		}
+
+		.status {
+			font-weight: bold;
+		}
+
+		.status-dot {
+			display: inline-block;
+			width: 10px;
+			height: 10px;
+			border-radius: 50%;
+			margin-right: 6px;
+		}
+
+		.status.running .status-dot {
+			background-color: #00ff00;
+		}
+
+		.status.stopped .status-dot {
+			background-color: #ff4444;
+		}
+
+		.graph-panel {
+			border: 1px solid #555;
+			padding: 15px;
+			margin-top: 15px;
+		}
+	
+		.graph-panel canvas {
+			max-height: 250px;
+		}
+
+		.vm-chart {
+			width: 100%;
+			height: 200px;
+			margin-top: 10px;
+			margin-bottom: 20px;
+		}
+
+	</style>
+</head>
+
+<body>
+	<h1>Homelab </h1>
+
+	<div class="panel">
+		<h2>OptiPlex / Proxmox</h2>
+		
+		<p>
+			CPU: 
+			<span id="host-cpu">Loading. . .</span>%
+		</p>
+
+		<div class="progress">
+			<div 
+				id="host-cpu-bar"
+				class="progress-bar"
+				style="width: 0%">
+			</div>
+		</div>
+
+		<p>
+			Memory:
+			<span id="host-memory">Loading. . . </span>
+		</p>
+
+		<div class="progress">
+			<div
+				id="host-memory-bar"
+				class="progress-bar"
+				style="width: 0%">
+			</div>
+		</div>
+
+		<p>
+			CPU Cores:
+			<span id="host-cores">Loading. . .</span>
+		</p>
+
+		<h2>Performance History</h2>
+
+		<div class="graph-panel">
+			<h3>CPU Usage</h3>
+			<canvas id="cpu-chart"></canvas>
+		</div>
+
+		<div class="graph-panel">
+			<h3>Memory Usage</h3>
+			<canvas id="memory-chart"></canvas>
+		</div>
+	</div>
+
+	<div class="panel">
+	
+		<h2>Storage</h2>
+	
+		<div id="storage">
+			Loading. . .
+		</div>
+
+	</div>
+
+	<div class="panel">
+		<h2>Virtual Machines</h2>
+
+		<div id="vms">
+			Loading. . .
+		</div>
+	</div>
+
+	<p> Last Updated: <span id="updated">Loading. . . </span></p>
+
+	<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+	<script>
+		
+		function formatGB(bytes) {
+			return (bytes / (1024 ** 3)).toFixed(2);
+		}
+
+		function formatUptime(seconds) {
+
+			const days = Math.floor(seconds / 86400);
+			seconds %= 86400
+
+			const hours = Math.floor(seconds / 3600);
+			seconds %= 3600;
+
+			const minutes = Math.floor(seconds / 60);
+
+			return `${days}d ${hours}h ${minutes}m`;
+		}
+
+		function formatNetwork(bytes) {
+	
+			if (bytes < 1024) {
+				return bytees.toFixed(0) + " B";
+			}
+
+			if (bytes < 1024 ** 2) {
+				return (bytes / 1024).toFixed(1) + " MB";
+			}
+
+			if (bytes < 1024 ** 3) {
+				return (bytes / (1024 ** 2)).toFixed(1) + " MB";
+			}
+
+			return (bytes / (1024 ** 2)).toFixed(1) + " MB";
+		}
+
+		let cpuChart;
+		let memoryChart;
+		let vmCharts = {};
+
+		function createCharts(history) {
+
+			const labels = history.map(item => item.time);
+			const cpuData = history.map(item => item.cpu);
+			const memoryData = history.map(item => item.memory);
+
+			if (cpuChart) {
+				cpuChart.destroy();
+			}
+
+			if (memoryChart) {
+				memoryChart.destroy();
+			}
+
+			cpuChart = new Chart(
+				document.getElementById("cpu-chart"),
+				{
+					type: "line",
+					data: {
+						labels: labels,
+						datasets: [{
+							label: "CPU %",
+							data: cpuData,
+							tension: 0.2
+						}]
+					},
+					options: {
+						animation: false,
+						scales: {
+							y: {
+								beginAtZero: true,
+								suggestedMax: 10
+							}
+						}
+					}			
+				}
+			);
+		
+			memoryChart = new Chart(
+				document.getElementById("memory-chart"),
+				{
+					type: "line",
+					data: {
+						labels: labels,
+						datasets: [{
+							label: "Memory %",
+							data: memoryData,
+							tension: 0.2
+						}]
+					},
+					options: {
+						animation: false,
+						scales: {
+							y: {
+								beginAtZero: true,
+								suggestedMax: 10
+							}
+						}
+					}
+				}
+			);
+		}
+		
+		function createVMCharts(vm) {
+
+ 			const labels = vm.history.map(item => item.time);
+			const cpuData = vm.history.map(item => item.cpu);
+			const memoryData = vm.history.map(item => item.memory);
+
+			const cpuCanvas =
+				document.getElementById(`vm-cpu-${vm.vmid}`);
+
+			const memoryCanvas =
+				document.getElementById(`vm-memory-${vm.vmid}`);
+
+    			if (!vmCharts[vm.vmid]) {
+
+        			const cpuChart = new Chart(
+            				cpuCanvas,
+            				{
+                				type: "line",
+
+                				data: {
+                    					labels: labels,
+
+                    					datasets: [{
+                        					label: "CPU %",
+                        					data: cpuData,
+                        					tension: 0.2
+                    					}]
+                				},
+
+                				options: {
+                    					animation: false,
+                    					maintainAspectRatio: false,
+
+                    					scales: {
+                        					y: {
+                            						beginAtZero: true,
+                            						suggestedMax: 10
+                        					}
+                    					}
+                				}
+            				}
+        			);
+
+        			const memoryChart = new Chart(
+            				memoryCanvas,
+            				{
+                				type: "line",
+
+                				data: {
+                    					labels: labels,
+
+                    					datasets: [{
+                        					label: "Memory %",
+                        					data: memoryData,
+                        					tension: 0.2
+                    					}]
+                				},
+
+                				options: {
+                    				animation: false,
+                    				maintainAspectRatio: false,
+
+                    				scales: {
+                        				y: {
+                            					beginAtZero: true,
+                            					max: 100
+                        				}
+                    				}
+                			}
+            			}
+        		);
+
+        		vmCharts[vm.vmid] = {
+            			cpu: cpuChart,
+            			memory: memoryChart
+        		};
+
+    		} else {
+
+        		vmCharts[vm.vmid].cpu.data.labels = labels;
+        		vmCharts[vm.vmid].cpu.data.datasets[0].data = cpuData;
+        		vmCharts[vm.vmid].cpu.update("none");
+
+        		vmCharts[vm.vmid].memory.data.labels = labels;
+        		vmCharts[vm.vmid].memory.data.datasets[0].data = memoryData;
+        		vmCharts[vm.vmid].memory.update("none");
+    		}
+	}
+							
+
+		function updateStatus() {
+			
+			fetch("status.json")
+				.then(response => {
+					console.log("Status response:", response.status);
+					return response.json();
+				})
+
+				.then(data => {
+		
+					//Host Information
+
+					const hostCPU =
+						data.host.cpu;
+
+					document.getElementById("host-cpu").textContent =
+						hostCPU.toFixed(1);
+
+					document.getElementById("host-cpu-bar").style.width =
+						hostCPU + "%";
+
+					document.getElementById("host-memory").textContent =
+						formatGB(data.host.memory_used) +
+						" GB / " +
+						formatGB(data.host.memory_total) +
+						" GB";
+
+					const hostMemoryPercent =
+						(data.host.memory_used / data.host.memory_total) * 100;
+
+					document.getElementById("host-memory-bar").style.width = 
+						hostMemoryPercent + "%";
+
+					document.getElementById("host-cores").textContent = 
+						data.host.cores;
+
+					// Storage
+
+					const storageContainer =
+						document.getElementById("storage");
+
+					storageContainer.innerHTML = "";
+
+					data.storage.sort((a, b) => a.name.localeCompare(b.name));
+			
+					data.storage.forEach(storage => {
+	
+						const storageElement = 
+							document.createElement("div");
+	
+						storageElement.className = "vm";
+
+						const usedPercent = 
+							(storage.used / storage.total) * 100;
+	
+						storageElement.innerHTML = `
+							<h3>${storage.name}</h3>
+
+							<p>
+			
+								${formatGB(storage.used)}
+								GB /
+								${formatGB(storage.total)}
+								GB
+	
+							</p>
+
+							<div class="progress">
+								<div
+									class="progress-bar"
+									style="width: ${usedPercent}%">
+								</div>
+							</div>
+
+							<p class="usage-text">
+
+								Used: ${usedPercent.toFixed(1)}%
+							</p>
+						
+						`;
+	
+						storageContainer.appendChild(storageElement);
+	
+					});
+
+					//Virtual Machines
+
+					const vmContainer = 
+						document.getElementById("vms");
+
+					Object.values(vmCharts).forEach(charts => {
+						
+						if (charts.cpu) {
+							charts.cpu.destroy();
+						}
+
+						if (charts.memory) {
+							charts.memory.destroy();
+						}
+					});
+
+					vmCharts = {};
+			
+					vmContainer.innerHTML = "";
+
+					data.vms.forEach(vm => {
+
+						const vmElement = 
+							document.createElement("div");
+
+						vmElement.className = "vm";
+	
+						const memoryPercent = 
+							(vm.memory_used / vm.memory_total) * 100;
+				
+						vmElement.innerHTML = `
+							<h3>${vm.name}</h3>
+		
+						<p>
+	
+							Status:	
+							<strong class="status ${vm.status}">
+								<span class="status-dot"></span>
+								${vm.status.toUpperCase()}
+							</strong>
+
+						</p>
+
+						<p>
+
+							CPU: ${vm.cpu.toFixed(1)}%
+
+						</p>
+
+						<div class="progress">
+							<div
+								class="progress-bar"
+								style="width: ${vm.cpu}%">
+							</div>
+						</div>
+
+						<p>
+
+							Memory:
+							${formatGB(vm.memory_used)}
+							GB /
+							${formatGB(vm.memory_total)}
+							GB
+					
+						</p>
+
+						<div class="progress">
+							<div
+								class="progress-bar"
+								style="width: ${memoryPercent}%">
+							</div>
+						</div>
+
+						<p class="usage-text">
+							Memory Used: ${memoryPercent.toFixed(1)}%
+						</p>
+
+						<p>
+							Uptime: ${formatUptime(vm.uptime)}
+						</p>
+
+						<p>
+							Network In: ${formatNetwork(vm.netin)}
+							<br>
+							Network Out: ${formatNetwork(vm.netout)}
+						</p>
+	
+						<h4>CPU History</h4>
+
+						<div class="vm-chart">
+							<canvas id="vm-cpu-${vm.vmid}"></canvas>
+						</div>
+
+						<h4>Memory History</h4>
+	
+						<div class="vm-chart">
+							<canvas id="vm-memory-${vm.vmid}"></canvas>
+						</div>							
+
+						`;
+
+						vmContainer.appendChild(vmElement);
+		
+						createVMCharts(vm);
+
+					});
+
+					createCharts(data.history);
+
+					document.getElementById("updated").textContent = 
+						new Date().toLocaleTimeString();
+
+				})
+								
+				.catch(error => {
+				
+					console.error("Dashboard error:", error);
+					
+					document.getElementById("updated").textContent = 
+						"error loading dashboard";
+				});				
+
+			}
+
+			updateStatus();
+		
+			setInterval(updateStatus, 2000);
+
+			window.addEventListener("error", function(event) {
+				document.getElementById("updated").textContent =
+					"JavaScript Error: " + event.message;
+			});
+
+	</script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
